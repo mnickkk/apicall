@@ -61,7 +61,7 @@ export const {
 
 var options = {
   method: 'POST',
-  url: 'https://api.nexiopaysandbox.com/pay/v3/deleteToken',
+  url: 'https://api.nexiopay.com/pay/v3/deleteToken',
   headers: { 'Content-Type': 'application/json', Authorization: 'Basic ' },
   data: { tokens: [''] },
 };
@@ -92,6 +92,7 @@ const processFile = async () => {
   return records;
 };
 let failures: string[][] = [];
+let completed: string[][] = [];
 
 async function main() {
   options.headers.Authorization = `Basic ${authToken}`;
@@ -104,10 +105,17 @@ async function main() {
   for await (const chunk of tokenChunks) {
     options.data.tokens = chunk;
     await new Promise(r => setTimeout(r, timeMsBetweenRequests));
-
     try {
-      const { data } = await axios.request(options);
-      console.info('Response', data);
+      console.log('Making api call with', options);
+      const { data } = await axios.request<
+        {
+          status: 'success' | 'failure';
+          key: string;
+          message: string;
+        }[]
+      >(options);
+      const completedChunk = data.filter(chunk => chunk.status === 'success').map(chunk => chunk.key);
+      completed.push(completedChunk);
     } catch (err) {
       const errors = err as Error | AxiosError;
       if (!axios.isAxiosError(err)) {
@@ -125,10 +133,15 @@ async function main() {
 main();
 
 async function exitHandler(options: any, exitCode: number) {
-  const rows = failures.flat().map(value => ({ payment_token: value }));
-  console.log(`Exitting, writting failures to disk`, rows);
-  const csv = new ObjectsToCsv(rows);
-  await csv.toDisk(csvPath + '.failures');
+  console.log(`Exitting, writing dat to disk`, { failures, completed });
+
+  const failedRows = failures.flat().map(value => ({ payment_token: value }));
+  const failedCSV = new ObjectsToCsv(failedRows);
+  await failedCSV.toDisk(csvPath + '.failures');
+
+  const completedRows = completed.flat().map(value => ({ payment_token: value }));
+  const completedCSV = new ObjectsToCsv(completedRows);
+  await completedCSV.toDisk(csvPath + '.completions');
   if (options.exit) process.exit();
 }
 
