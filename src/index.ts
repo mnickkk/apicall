@@ -128,31 +128,16 @@ async function main() {
       }
     }
   }
+  console.log(`Exitting, writing dat to disk`);
+
+  const failedRows = failures.flat().map(value => ({ payment_token: value }));
+  const completedRows = completed.flat().map(value => ({ payment_token: value }));
+  console.log({ failedRows, completedRows });
+
+  const failedCSV = new ObjectsToCsv(failedRows);
+  await failedCSV.toDisk(csvPath + '.failures');
+  const completedCSV = new ObjectsToCsv(completedRows);
+  await completedCSV.toDisk(csvPath + '.completions');
 }
 
 main();
-
-async function exitHandler(options: any, exitCode: number) {
-  console.log(`Exitting, writing dat to disk`, { failures, completed });
-
-  const failedRows = failures.flat().map(value => ({ payment_token: value }));
-  const failedCSV = new ObjectsToCsv(failedRows);
-  await failedCSV.toDisk(csvPath + '.failures');
-
-  const completedRows = completed.flat().map(value => ({ payment_token: value }));
-  const completedCSV = new ObjectsToCsv(completedRows);
-  await completedCSV.toDisk(csvPath + '.completions');
-  if (options.exit) process.exit();
-}
-
-process.on('exit', exitHandler.bind(null, { exit: true }));
-
-//catches ctrl+c event
-process.on('SIGINT', exitHandler.bind(null, { exit: true }));
-
-// catches "kill pid" (for example: nodemon restart)
-process.on('SIGUSR1', exitHandler.bind(null, { exit: true }));
-process.on('SIGUSR2', exitHandler.bind(null, { exit: true }));
-
-//catches uncaught exceptions
-process.on('uncaughtException', exitHandler.bind(null, { exit: true }));
