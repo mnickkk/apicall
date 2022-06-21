@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import { parse as parseCSV } from 'csv-parse';
-import fastCsv from 'fast-csv';
+
+import ObjectsToCsv from 'objects-to-csv';
 import fs from 'fs';
 import path from 'path';
 import { finished } from 'stream/promises';
@@ -65,29 +66,6 @@ var options = {
   data: { tokens: [''] },
 };
 
-type ModuleType = typeof import('neat-csv');
-
-function loadNeatCsv(): Promise<ModuleType> {
-  return import('neat-csv');
-}
-
-function readCsv(path: string, options: any, rowProcessor: any) {
-  return new Promise((resolve, reject) => {
-    const data: any[] = [];
-
-    fastCsv
-      .parseFile(path, options)
-      .on('error', reject)
-      .on('data', (row: any) => {
-        const obj = rowProcessor(row);
-        if (obj) data.push(obj);
-      })
-      .on('end', () => {
-        resolve(data);
-      });
-  });
-}
-
 const array_chunks = (array: any[], chunk_size: number) =>
   Array(Math.ceil(array.length / chunk_size))
     .fill(undefined)
@@ -99,6 +77,8 @@ const processFile = async () => {
   const parser = fs.createReadStream(path.resolve(csvPath)).pipe(
     parseCSV({
       // CSV options if any
+      columns: true,
+      groupColumnsByName: true,
     })
   );
   parser.on('readable', function () {
@@ -111,18 +91,15 @@ const processFile = async () => {
   await finished(parser);
   return records;
 };
+let failures: string[][] = [];
 
 async function main() {
   options.headers.Authorization = `Basic ${authToken}`;
-  const data = await processFile();
-  const [headers, ...records] = data;
-  const paymentTokenIndex = headers.findIndex((v: string) => v === 'payment_token');
-  const tokens = records.map((values: string[]) => values[paymentTokenIndex]);
+  const records = await processFile();
+  const tokens = records.map((values: { payment_token: string }) => values.payment_token);
   const tokenChunks: string[][] = array_chunks(tokens, chunkSize);
 
   options.data.tokens = [];
-
-  let failures = [];
 
   for await (const chunk of tokenChunks) {
     options.data.tokens = chunk;
@@ -143,8 +120,26 @@ async function main() {
       }
     }
   }
-  failures = failures.flat();
-  fs.writeFileSync(csvPath + '.failures', JSON.stringify(failures));
 }
 
 main();
+
+async function exitHandler(options: any, exitCode: number) {
+  const rows = failures.flat().map(value => ({ payment_token: value }));
+  console.log(`Exitting, writting failures to disk`, rows);
+  const csv = new ObjectsToCsv(rows);
+  await csv.toDisk(csvPath + '.failures');
+  if (options.exit) process.exit();
+}
+
+process.on('exit', exitHandler.bind(null, { exit: true }));
+
+//catches ctrl+c event
+process.on('SIGINT', exitHandler.bind(null, { exit: true }));
+
+// catches "kill pid" (for example: nodemon restart)
+process.on('SIGUSR1', exitHandler.bind(null, { exit: true }));
+process.on('SIGUSR2', exitHandler.bind(null, { exit: true }));
+
+//catches uncaught exceptions
+process.on('uncaughtException', exitHandler.bind(null, { exit: true }));
